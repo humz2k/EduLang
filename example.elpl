@@ -1,5 +1,6 @@
 var int a = 5 + 100
 var char b = 11
 list int[5] c = [1,2,3,4,5]
+list char[2] d = ["a","c"]
 #comment
 b[a] = 5

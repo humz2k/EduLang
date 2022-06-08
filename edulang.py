@@ -1,155 +1,131 @@
 from enum import Enum
 
+#Error types
 class Error(Enum):
     SYNTAX = "syntax"
+    TYPE = "type"
+    CATASTROPHIC = "catastrophic"
 
 def get_commands(file):
+    #read raw from file
     with open(file,"r") as f:
         commands = f.read().splitlines()
+
+    #generate line numbers
     line_numbers = list(range(len(commands)))
-    line_numbers.append(line_numbers[-1]+1)
+
+    #adjust line numbers so they start with 1 and not 0
+    line_numbers.append(line_numbers[-1]+1) 
     line_numbers.pop(0)
 
+    #Load line numbers and commands into a dict
     command_list = {i:j for i,j in zip(line_numbers,commands) if len(j) != 0 and len(list(set(j))) != 1 and j.strip()[0] != "#"}
+
+    #return the dict
     return command_list
 
 class Interpreter:
-    def __init__(self):
-        self.memory = []
+    def __init__(self,memory_size = "inf"):
+        self.memory_size = memory_size #size of memory
+        self.memory = [] #"ram"
+        self.variables = {} #dict of names to addresses
+        self.halt = False
+        self.keywords = ["var","int","char","list","if","=","==","!=",">","<",">=","<=","for","while","return","import","def","class"] #keywords
+        self.math_keywords = ["=","==","!=",">","<",">=","<=","*","/","+","-",",","~","^","!"] #math keywords
 
-        self.variables = {}
-        self.alloc_var = 0
-        self.functions = {}
-
-        self.keywords = ["var","int","char","list","if","=","==","!=",">","<",">=","<=","for","while","return","import","def","class"]
-        self.math_keywords = ["=","==","!=",">","<",">=","<=","*","/","+","-",",","~","^","!"]
-    
     def throw(self,error_type,line,command):
         print("### ERROR ###")
         print("LINE",str(line) + " ->",str(error_type) + ": " + command)
-    
-    def resolve(self,list_index):
-        if "[" in list_index:
-            temp = list_index.split("[")
-            start = temp[0]
-            offset = list_index.split(start)[1][1:-1]
-            start = self.variables[start]["addr"]
-            addr = start + self.resolve(offset)
-            set_type = int
-            if type(start) is str:
-                set_type = float
-                if self.variables[start]["type"] in ["int","char"]:
-                    set_type = int
-            if addr >= len(self.memory):
-                return set_type(0)
-            return set_type(self.memory[addr])
+        self.halt = True
+
+    def resolve(self,address):
+        #takes in any address, and resolves it.
+        try:
+            address = int(address)
+        except:
+            pass
+        if isinstance(address,int):
+            return address
+        if "[" in address:
+            addr = address.split("[")[0]
+            offset = address.split(addr)[1][1:-1]
+            return self.variables[addr] + self.resolve(offset)
         else:
-            if list_index.isnumeric():
-                return int(list_index)
-            else:
-                return self.variables[list_index]["addr"]
+            return self.memory[self.variables[address]]
     
-    def execute(self,commands,local_vars=[]):
-        for nline in commands:
-            command = commands[nline]
-            if command.startswith("var"):
-                splitted = command.split()
-                if len(splitted) < 3 or len(splitted) == 4:
-                    self.throw(Error.SYNTAX,nline,command);break
-                if splitted[1] in ["int","float","char"]:
-                    var_type = splitted[1]
-                else:
-                    self.throw(Error.SYNTAX,nline,command);break
-                var_name = splitted[2]
-                if var_name in self.keywords:
-                    self.throw(Error.SYNTAX,nline,command);break
-                var_val = 0
-                if len(splitted) > 3:
-                    if splitted[3] != "=":
-                        self.throw(Error.SYNTAX,nline,command);break
-                    val = "".join(splitted[4:])
-                    temp_val = val[:]
-                    for keyword in self.math_keywords:
-                        temp_val = temp_val.replace(keyword," ")
-                    vars_needed = [i.strip("()") for i in temp_val.split() if not i.isnumeric()]
-                    val = "__out__=" + val
-                    do_break = False
-                    local_vars = {}
-                    temp_name = 0
-                    for i in vars_needed:
-                        if i in self.keywords:
-                            self.throw(Error.SYNTAX,nline,command);do_break=True
-                        elif i in self.variables:
-                            local_vars[i] = self.memory[self.variables[i]["addr"]]
-                        elif "[" in i:
-                            new_name = "__temp" + str(temp_name) + "__"
-                            val = val.replace(i,new_name)
-                            try:
-                                local_vars[new_name] = self.resolve(i)
-                            except:
-                                self.throw(Error.SYNTAX,nline,command);do_break=True
-                        else:
-                            self.throw(Error.SYNTAX,nline,command);do_break=True
-                    if do_break:
-                        break
-                    exec(val,{},local_vars)
-                    var_val = local_vars["__out__"]
-                var_addr = len(self.memory)
-                if var_type == "int":
-                    self.memory.append(int(var_val))
-                elif var_type == "float":
-                    self.memory.append(float(var_val))
-                elif var_type == "char":
-                    var_val = int(var_val)
-                    if var_val > 255:
-                        self.throw(Error.SYNTAX,nline,command);break
-                    self.memory.append(var_val)
-                self.variables[var_name] = {"type":var_type,"addr":var_addr}
+    def resolve_value(self,value):
+        #get keywords in order:
+        keywords = []
+        for letter in value:
+            if letter in self.math_keywords:
+                keywords.append(letter)
+        keywords.append("")
 
-            elif command.startswith("list"):
-                splitted = command.split()
-                if len(splitted) < 3 or len(splitted) == 4:
-                    self.throw(Error.SYNTAX,nline,command);break
-                if "[" not in splitted[1]:
-                    self.throw(Error.SYNTAX,nline,command);break
-                var_name = splitted[2]
-                if var_name in self.keywords:
-                    self.throw(Error.SYNTAX,nline,command);break
-                var_type = splitted[1].split("[")[0]
-                len_list = splitted[1].split(var_type)[1][1:-1]
-                if not var_type in ["int","float","char"]:
-                    self.throw(Error.SYNTAX,nline,command);break
-                if len_list.isnumeric():
-                    len_list = int(len_list)
-                else:
-                    if "[" in len_list:
-                        len_list = self.resolve(len_list)
-                    else:
-                        if len_list in self.variables:
-                            len_list = self.memory[self.variables[len_list]["addr"]]
-                vals = [0] * len_list
-                if len(splitted) > 3:
-                    if splitted[3] != "=":
-                        self.throw(Error.SYNTAX,nline,command);break
-                    vals = command.split(" = ")[1][1:-1]
-                    vals = [i.strip() for i in vals.split(",")]
-                    if var_type == "int" or var_type == "char":
-                        vals = [int(i) for i in vals]
-                    if var_type == "float":
-                        vals = [float(i) for i in vals]
-                if len(vals) != len_list:
-                    self.throw(Error.SYNTAX,nline,command);break
-                var_addr = len(self.memory)
-                self.memory.append(var_addr+1)
-                for i in range(len_list):
-                    self.memory.append(vals[i])
-                self.variables[var_name] = {"type":var_type,"addr":var_addr}
+        #split the value into the different elements
+        for keyword in self.math_keywords:
+            value = value.replace(keyword,",")
+        value_split = value.split(",")
 
-            elif command.split()[1] == "=":
-                pass
+        #for each of these elements, figure out they're actual value
+        for idx in range(len(value_split)):
+            if "[" in value_split[idx]:
+                value_split[idx] = self.memory[self.resolve(value_split[idx])]
+            else:
+                value_split[idx] = self.resolve(value_split[idx])
+        
+        out_val = "__out__="
+        for i,j in zip(value_split,keywords):
+            out_val += (str(i) + str(j))
+        local_vars = {}
+        exec(out_val,{},local_vars)
+        return local_vars["__out__"]
+        
+    
+    def alloc_var(self,line,command):
+        #check that we actually are allocing a var
+        if not command.startswith("var"):
+            self.throw(Error.CATASTROPHIC,line,command)
 
-commands = get_commands("example.elpl")
-inter = Interpreter()
-inter.execute(commands)
-print(inter.memory)
-print(inter.variables)
+        #split the command up into its separate parts (We need a space both sides of the equals)
+        command_split = command.split(" ")[1:]
+
+        #check the command is either just int [varname] or int [varname] = [value]
+        if not (len(command_split) == 2 or len(command_split) > 3):
+            self.throw(Error.SYNTAX,line,command)
+        
+        #if command has assignment (i.e. longer than int a = , then check if middle is equals)
+        if len(command_split) > 3:
+            if not command_split[2] == "=":
+                self.throw(Error.SYNTAX,line,command)
+        
+        #separate the split commands into type, name and value
+        var_type = command_split[0]
+        var_name = command_split[1]
+        var_value = 0
+        if len(command_split) > 3:
+            var_value = "".join(command_split[3:])
+        var_value = self.resolve_value(var_value)
+
+        #check that the type and name are all valid
+        if not var_type in ["int","char","float"]:
+            self.throw(Error.SYNTAX,line,command)
+        if var_name in self.keywords:
+            self.throw(Error.SYNTAX,line,command)
+        
+        var_addr = len(self.memory)
+        if var_type == "int":
+            self.memory.append(int(var_value))
+        elif var_type == "float":
+            self.memory.append(float(var_value))
+        elif var_type == "char":
+            var_value = int(var_value)
+            if var_value <= 255:
+                self.memory.append(var_value)
+        self.variables[var_name] = var_addr
+        
+
+test = Interpreter()
+test.memory=[5,6,7,2,5]
+test.variables["a"] = 0
+test.variables["b"] = 3
+test.alloc_var(1,"var int c = 5+10-a[b]")
