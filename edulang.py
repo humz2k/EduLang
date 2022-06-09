@@ -24,11 +24,12 @@ def get_commands(file):
     #return the dict
     return command_list
 
-class Interpreter:
+class Env:
     def __init__(self,memory_size = "inf"):
         self.memory_size = memory_size #size of memory
         self.memory = [] #"ram"
         self.variables = {} #dict of names to addresses
+        self.var_types = {}
         self.halt = False
         self.keywords = ["var","int","char","list","if","=","==","!=",">","<",">=","<=","for","while","return","import","def","class"] #keywords
         self.math_keywords = ["=","==","!=",">","<",">=","<=","*","/","+","-",",","~","^","!"] #math keywords
@@ -46,6 +47,10 @@ class Interpreter:
             pass
         if isinstance(address,int):
             return address
+        try:
+            return float(address)
+        except:
+            pass
         if "[" in address:
             addr = address.split("[")[0]
             offset = address.split(addr)[1][1:-1]
@@ -79,8 +84,107 @@ class Interpreter:
         local_vars = {}
         exec(out_val,{},local_vars)
         return local_vars["__out__"]
+    
+    def execute(self,commands):
+        #set halt to False
+        self.halt = False
+        for line in commands.keys():
+
+            #if error thrown, then return False
+            if self.halt:
+                return False
+
+            #get command from line number
+            command = commands[line]
+
+            #do different things
+            if command.startswith("#"):
+                pass
+            elif command.startswith("var"):
+                self.alloc_var(line,command)
+            elif command.startswith("list"):
+                self.alloc_list(line,command)
+            else:
+                command_split = command.split(" ")
+                if command_split[1] == "=":
+                    self.assign(line,command)
+        
+        #return true if executed successfully
+        return True
+    
+    def assign(self,line,command):
+        command_split = command.split(" ")
+        if not command_split[1] == "=":
+            self.throw(Error.CATASTROPHIC,line,command)
         
     
+    def alloc_list(self,line,command):
+        #check that we actually are allocing a var
+        if not command.startswith("list"):
+            self.throw(Error.CATASTROPHIC,line,command)
+        
+        #split the command up into its separate parts (We need a space both sides of the equals)
+        command_split = command.split(" ")[1:]
+
+        #check the command is either just int [varname] or int [varname] = [value]
+        if not (len(command_split) == 2 or len(command_split) > 3):
+            self.throw(Error.SYNTAX,line,command)
+        
+        #if command has assignment (i.e. longer than int a = , then check if middle is equals)
+        if len(command_split) > 3:
+            if not command_split[2] == "=":
+                self.throw(Error.SYNTAX,line,command)
+        
+        #check the type has a length
+        var_type = command_split[0]
+        if not ("[" in var_type and var_type[-1] == "]"):
+            self.throw(Error.SYNTAX,line,command)
+
+        #resolve the type and length
+        temp = var_type.split("[")[0]
+        var_length = "".join(var_type.split(temp)[1])[1:-1]
+        if "[" in var_length:
+            var_length = self.memory(self.resolve(var_length))
+        else:
+            var_length = self.resolve(var_length)
+        var_type = temp
+
+        #sanitize type
+        if not var_type in ["int","float","char"]:
+            self.throw(Error.SYNTAX,line,command)
+        
+        var_name = command_split[1]
+        if var_name in self.keywords:
+            self.throw(Error.SYNTAX,line,command)
+        
+        #get values
+        var_value = [0] * var_length
+        if len(command_split) > 3:
+            var_value = "".join(command_split[3:])
+        if (var_value[0] == '"' and var_value[-1] == '"') or (var_value[0] == "'" and var_value[-1] == "'"):
+            var_value = [ord(i) for i in var_value[1:-1]]
+        elif var_value[0] == "[" and var_value[-1] == "]":
+            var_value = var_value[1:-1].split(",")
+            for idx in range(len(var_value)):
+                if (var_value[idx][0] == "'" and var_value[idx][-1] == "'") or (var_value[idx][0] == '"' and var_value[idx][-1] == '"'):
+                    var_value[idx] = ord(var_value[idx][1:-1])
+                else:
+                    if "[" in var_value[idx]:
+                        var_value[idx] = self.memory[self.resolve(var_value[idx])]
+                    else:
+                        var_value[idx] = self.resolve(var_value[idx])
+        else:
+            self.throw(Error.SYNTAX,line,command)
+        
+        if len(var_value) != var_length:
+            self.throw(Error.SYNTAX,line,command)
+        
+        #add to memory and save address
+        var_addr = len(self.memory)
+        self.var_types[var_name] = var_type
+        self.memory += var_value
+        self.variables[var_name] = var_addr
+
     def alloc_var(self,line,command):
         #check that we actually are allocing a var
         if not command.startswith("var"):
@@ -121,11 +225,13 @@ class Interpreter:
             var_value = int(var_value)
             if var_value <= 255:
                 self.memory.append(var_value)
+            else:
+                self.memory.append(0)
         self.variables[var_name] = var_addr
+        self.var_types[var_name] = var_type
         
 
-test = Interpreter()
-test.memory=[5,6,7,2,5]
-test.variables["a"] = 0
-test.variables["b"] = 3
-test.alloc_var(1,"var int c = 5+10-a[b]")
+env = Env()
+commands = get_commands("example.elpl")
+env.execute(commands)
+print(env.memory)
